@@ -46,6 +46,11 @@ func (e *Executor) Run(ctx context.Context, wg *sync.WaitGroup, dic *di.Containe
 			if e.stop {
 				return
 			}
+			ds := container.DeviceServiceFrom(dic.Get)
+			if ds.AdminState == contract.Locked {
+				lc.Info("AutoEvent - stopped for locked device service")
+				return
+			}
 
 			lc.Debug(fmt.Sprintf("AutoEvent - executing %v", e.autoEvent))
 			evt, appErr := readResource(e, dic)
@@ -72,7 +77,16 @@ func (e *Executor) Run(ctx context.Context, wg *sync.WaitGroup, dic *di.Containe
 				if event.Origin == 0 {
 					event.Origin = common.GetUniqueOrigin()
 				}
-				go common.SendEvent(event, lc, container.CoredataEventClientFrom(dic.Get))
+
+				// After the auto event executes a read command, it will create a goroutine to send out events.
+				// When the concurrent auto event amount becomes large, core-data might be hard to handle so many HTTP requests at the same time.
+				// The device service will get some network errors like EOF or Connection reset by peer.
+				// By adding a buffer here, the user can use the Service.AsyncBufferSize configuration to control the goroutine for sending events.
+				go func() {
+					m.autoeventBuffer <- true
+					common.SendEvent(event, lc, container.CoredataEventClientFrom(dic.Get))
+					<-m.autoeventBuffer
+				}()
 			} else {
 				lc.Debug(fmt.Sprintf("AutoEvent - no event generated when reading resource %s", e.autoEvent.Resource))
 			}
@@ -128,14 +142,14 @@ func (e *Executor) Stop() {
 }
 
 // NewExecutor creates an Executor for an AutoEvent
-func NewExecutor(deviceName string, ae contract.AutoEvent) (Executor, error) {
+func NewExecutor(deviceName string, ae contract.AutoEvent) (*Executor, error) {
 	// check Frequency
 	duration, err := time.ParseDuration(ae.Frequency)
 	if err != nil {
-		return Executor{}, err
+		return nil, err
 	}
 
-	return Executor{
+	return &Executor{
 		deviceName:   deviceName,
 		autoEvent:    ae,
 		lastReadings: make(map[string]interface{}),
