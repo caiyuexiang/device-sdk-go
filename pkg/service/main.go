@@ -1,6 +1,6 @@
 // -*- Mode: Go; indent-tabs-mode: t -*-
 //
-// Copyright (C) 2020 IOTech Ltd
+// Copyright (C) 2020-2021 IOTech Ltd
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -10,23 +10,25 @@ import (
 	"context"
 	"os"
 
-	"github.com/edgexfoundry/device-sdk-go/internal/autodiscovery"
-	"github.com/edgexfoundry/device-sdk-go/internal/clients"
-	"github.com/edgexfoundry/device-sdk-go/internal/common"
-	"github.com/edgexfoundry/device-sdk-go/internal/container"
-	"github.com/edgexfoundry/go-mod-bootstrap/bootstrap"
-	"github.com/edgexfoundry/go-mod-bootstrap/bootstrap/flags"
-	"github.com/edgexfoundry/go-mod-bootstrap/bootstrap/handlers/httpserver"
-	"github.com/edgexfoundry/go-mod-bootstrap/bootstrap/handlers/message"
-	"github.com/edgexfoundry/go-mod-bootstrap/bootstrap/interfaces"
-	"github.com/edgexfoundry/go-mod-bootstrap/bootstrap/startup"
-	"github.com/edgexfoundry/go-mod-bootstrap/di"
+	"github.com/edgexfoundry/device-sdk-go/v2/internal/autodiscovery"
+	"github.com/edgexfoundry/device-sdk-go/v2/internal/autoevent"
+	"github.com/edgexfoundry/device-sdk-go/v2/internal/clients"
+	"github.com/edgexfoundry/device-sdk-go/v2/internal/common"
+	"github.com/edgexfoundry/device-sdk-go/v2/internal/container"
+
+	"github.com/edgexfoundry/go-mod-bootstrap/v2/bootstrap"
+	"github.com/edgexfoundry/go-mod-bootstrap/v2/bootstrap/flags"
+	"github.com/edgexfoundry/go-mod-bootstrap/v2/bootstrap/handlers"
+	"github.com/edgexfoundry/go-mod-bootstrap/v2/bootstrap/interfaces"
+	"github.com/edgexfoundry/go-mod-bootstrap/v2/bootstrap/startup"
+	"github.com/edgexfoundry/go-mod-bootstrap/v2/di"
+
 	"github.com/gorilla/mux"
 )
 
 var instanceName string
 
-func Main(serviceName string, serviceVersion string, proto interface{}, ctx context.Context, cancel context.CancelFunc, router *mux.Router, readyStream chan<- bool) {
+func Main(serviceName string, serviceVersion string, proto interface{}, ctx context.Context, cancel context.CancelFunc, router *mux.Router) {
 	startupTimer := startup.NewStartUpTimer(serviceName)
 
 	additionalUsage :=
@@ -37,7 +39,7 @@ func Main(serviceName string, serviceVersion string, proto interface{}, ctx cont
 	sdkFlags.FlagSet.StringVar(&instanceName, "i", "", "")
 	sdkFlags.Parse(os.Args[1:])
 
-	serviceName = setServiceName(serviceName, sdkFlags.Profile())
+	serviceName = setServiceName(serviceName)
 	ds = &DeviceService{}
 	ds.Initialize(serviceName, serviceVersion, proto)
 
@@ -47,7 +49,7 @@ func Main(serviceName string, serviceVersion string, proto interface{}, ctx cont
 		},
 	})
 
-	httpServer := httpserver.NewBootstrap(router, true)
+	httpServer := handlers.NewHttpServer(router, true)
 
 	bootstrap.Run(
 		ctx,
@@ -59,17 +61,19 @@ func Main(serviceName string, serviceVersion string, proto interface{}, ctx cont
 		startupTimer,
 		dic,
 		[]interfaces.BootstrapHandler{
+			handlers.SecureProviderBootstrapHandler,
 			httpServer.BootstrapHandler,
 			clients.NewClients().BootstrapHandler,
+			autoevent.BootstrapHandler,
 			NewBootstrap(router).BootstrapHandler,
 			autodiscovery.BootstrapHandler,
-			message.NewBootstrap(serviceName, serviceVersion).BootstrapHandler,
+			handlers.NewStartMessage(serviceName, serviceVersion).BootstrapHandler,
 		})
 
 	ds.Stop(false)
 }
 
-func setServiceName(name string, profile string) string {
+func setServiceName(name string) string {
 	envValue := os.Getenv(common.EnvInstanceName)
 	if len(envValue) > 0 {
 		instanceName = envValue

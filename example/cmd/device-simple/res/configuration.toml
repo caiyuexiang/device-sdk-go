@@ -1,5 +1,12 @@
 [Writable]
 LogLevel = 'INFO'
+  # Example InsecureSecrets configuration that simulates SecretStore for when EDGEX_SECURITY_SECRET_STORE=false
+  [Writable.InsecureSecrets]
+    [Writable.InsecureSecrets.Sample]
+    path = "sample"
+      [Writable.InsecureSecrets.Sample.Secrets]
+      username = ""
+      password = ""
 
 [Service]
 BootTimeout = 30000
@@ -30,10 +37,22 @@ Type = 'consul'
   Host = 'localhost'
   Port = 48081
 
-  [Clients.Logging]
-  Protocol = 'http'
-  Host = 'localhost'
-  Port = 48061
+# Example SecretStore configuration.
+# Only used when EDGEX_SECURITY_SECRET_STORE=true
+# Must also add `ADD_SECRETSTORE_TOKENS: "device-simple"` to vault-worker environment so it generates
+# the token and secret store in vault for 'device-simple'
+[SecretStore]
+Host = 'localhost'
+Port = 8200
+Path = '/v1/secret/edgex/device-simple/'
+Protocol = 'http'
+RootCaCertPath = ''
+ServerName = ''
+TokenFile = '/tmp/edgex/secrets/device-simple/secrets-token.json'
+AdditionalRetryAttempts = 10
+RetryWaitPeriod = "1s"
+  [SecretStore.Authentication]
+  AuthType = 'X-Vault-Token'
 
 [Device]
   DataTransform = true
@@ -48,11 +67,6 @@ Type = 'consul'
   [Device.Discovery]
     Enabled = false
     Interval = '30s'
-
-# Remote and file logging disabled so only stdout logging is used
-[Logging]
-EnableRemote = false
-File = ''
 
 # Pre-define Devices
 [[DeviceList]]

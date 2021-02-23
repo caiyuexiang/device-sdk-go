@@ -7,7 +7,7 @@
 package common
 
 import (
-	bootstrapConfig "github.com/edgexfoundry/go-mod-bootstrap/config"
+	bootstrapConfig "github.com/edgexfoundry/go-mod-bootstrap/v2/config"
 )
 
 // ConfigurationStruct contains the configuration properties for the device service.
@@ -16,8 +16,6 @@ type ConfigurationStruct struct {
 	Writable WritableInfo
 	// Clients is a map of services used by a DS.
 	Clients map[string]bootstrapConfig.ClientInfo
-	// Logging contains logging-specific configuration settings.
-	Logging bootstrapConfig.LoggingInfo
 	// Registry contains registry-specific settings.
 	Registry bootstrapConfig.RegistryInfo
 	// Service contains DeviceService-specific settings.
@@ -28,6 +26,8 @@ type ConfigurationStruct struct {
 	DeviceList []DeviceConfig `consul:"-"`
 	// Driver is a string map contains customized configuration for the protocol driver implemented based on Device SDK
 	Driver map[string]string
+	// SecretStore contains information for connecting to the secure SecretStore (Vault) to retrieve or store secrets
+	SecretStore bootstrapConfig.SecretStoreInfo
 }
 
 // UpdateFromRaw converts configuration received from the registry to a service-specific configuration struct which is
@@ -66,10 +66,10 @@ func (c *ConfigurationStruct) UpdateWritableFromRaw(rawWritable interface{}) boo
 // into an bootstrapConfig.BootstrapConfiguration struct contained within ConfigurationStruct).
 func (c *ConfigurationStruct) GetBootstrap() bootstrapConfig.BootstrapConfiguration {
 	return bootstrapConfig.BootstrapConfiguration{
-		Clients:  c.Clients,
-		Service:  c.Service.GetBootstrapServiceInfo(),
-		Registry: c.Registry,
-		Logging:  c.Logging,
+		Clients:     c.Clients,
+		Service:     c.Service.GetBootstrapServiceInfo(),
+		Registry:    c.Registry,
+		SecretStore: c.SecretStore,
 	}
 }
 
@@ -81,4 +81,9 @@ func (c *ConfigurationStruct) GetLogLevel() string {
 // GetRegistryInfo gets the config.RegistryInfo field from the ConfigurationStruct.
 func (c *ConfigurationStruct) GetRegistryInfo() bootstrapConfig.RegistryInfo {
 	return c.Registry
+}
+
+// GetInsecureSecrets returns the service's InsecureSecrets.
+func (c *ConfigurationStruct) GetInsecureSecrets() bootstrapConfig.InsecureSecrets {
+	return c.Writable.InsecureSecrets
 }

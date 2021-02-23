@@ -1,6 +1,6 @@
 // -*- Mode: Go; indent-tabs-mode: t -*-
 //
-// Copyright (C) 2020 IOTech Ltd
+// Copyright (C) 2020-2021 IOTech Ltd
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -9,7 +9,9 @@ package transformer
 import (
 	"math"
 
-	dsModels "github.com/edgexfoundry/device-sdk-go/pkg/models"
+	"github.com/edgexfoundry/go-mod-core-contracts/v2/v2"
+
+	dsModels "github.com/edgexfoundry/device-sdk-go/v2/pkg/models"
 )
 
 // NaNError is used to throw the NaN error for the floating-point value
@@ -21,7 +23,7 @@ func (e NaNError) Error() string {
 
 func isNaN(cv *dsModels.CommandValue) (bool, error) {
 	switch cv.Type {
-	case dsModels.Float32:
+	case v2.ValueTypeFloat32:
 		v, err := cv.Float32Value()
 		if err != nil {
 			return false, err
@@ -29,7 +31,7 @@ func isNaN(cv *dsModels.CommandValue) (bool, error) {
 		if math.IsNaN(float64(v)) {
 			return true, nil
 		}
-	case dsModels.Float64:
+	case v2.ValueTypeFloat64:
 		v, err := cv.Float64Value()
 		if err != nil {
 			return false, err

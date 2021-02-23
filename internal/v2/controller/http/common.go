@@ -7,14 +7,19 @@
 package http
 
 import (
+	"encoding/json"
 	"net/http"
+	"strings"
 
-	sdkCommon "github.com/edgexfoundry/device-sdk-go/internal/common"
-	"github.com/edgexfoundry/device-sdk-go/internal/container"
-	"github.com/edgexfoundry/device-sdk-go/internal/telemetry"
+	bootstrapContainer "github.com/edgexfoundry/go-mod-bootstrap/v2/bootstrap/container"
+	"github.com/edgexfoundry/go-mod-core-contracts/v2/errors"
 
-	contractsV2 "github.com/edgexfoundry/go-mod-core-contracts/v2"
-	"github.com/edgexfoundry/go-mod-core-contracts/v2/dtos/common"
+	sdkCommon "github.com/edgexfoundry/device-sdk-go/v2/internal/common"
+	"github.com/edgexfoundry/device-sdk-go/v2/internal/container"
+	"github.com/edgexfoundry/device-sdk-go/v2/internal/telemetry"
+
+	contractsV2 "github.com/edgexfoundry/go-mod-core-contracts/v2/v2"
+	"github.com/edgexfoundry/go-mod-core-contracts/v2/v2/dtos/common"
 )
 
 // Ping handles the request to /ping endpoint. Is used to test if the service is working
@@ -54,4 +59,52 @@ func (c *V2HttpController) Metrics(writer http.ResponseWriter, request *http.Req
 
 	response := common.NewMetricsResponse(metrics)
 	c.sendResponse(writer, request, contractsV2.ApiMetricsRoute, response, http.StatusOK)
+}
+
+// Secret handles the request to add Device Service exclusive secret to the Secret Store
+// It returns a response as specified by the V2 API swagger in openapi/v2
+func (c *V2HttpController) Secret(writer http.ResponseWriter, request *http.Request) {
+	defer func() {
+		_ = request.Body.Close()
+	}()
+
+	provider := bootstrapContainer.SecretProviderFrom(c.dic.Get)
+	secretRequest := common.SecretRequest{}
+	err := json.NewDecoder(request.Body).Decode(&secretRequest)
+	if err != nil {
+		edgexError := errors.NewCommonEdgeX(errors.KindContractInvalid, "JSON decode failed", err)
+		c.sendEdgexError(writer, request, edgexError, sdkCommon.APIV2SecretRoute)
+		return
+	}
+
+	path, secret := c.prepareSecret(secretRequest)
+
+	if err := provider.StoreSecrets(path, secret); err != nil {
+		edgexError := errors.NewCommonEdgeX(errors.KindServerError, "Storing secret failed", err)
+		c.sendEdgexError(writer, request, edgexError, sdkCommon.APIV2SecretRoute)
+		return
+	}
+
+	response := common.NewBaseResponse(secretRequest.RequestId, "", http.StatusCreated)
+	c.sendResponse(writer, request, sdkCommon.APIV2SecretRoute, response, http.StatusCreated)
+}
+
+func (c *V2HttpController) prepareSecret(request common.SecretRequest) (string, map[string]string) {
+	var secretKVs = make(map[string]string)
+	for _, secret := range request.SecretData {
+		secretKVs[secret.Key] = secret.Value
+	}
+
+	path := strings.TrimSpace(request.Path)
+	config := container.ConfigurationFrom(c.dic.Get)
+
+	// add '/' in the full URL path if it's not already at the end of the base path or sub path
+	if !strings.HasSuffix(config.SecretStore.Path, "/") && !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	} else if strings.HasSuffix(config.SecretStore.Path, "/") && strings.HasPrefix(path, "/") {
+		// remove extra '/' in the full URL path because secret store's (Vault) APIs don't handle extra '/'.
+		path = path[1:]
+	}
+
+	return path, secretKVs
 }

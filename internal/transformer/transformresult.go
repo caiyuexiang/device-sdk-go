@@ -1,6 +1,6 @@
 // -*- Mode: Go; indent-tabs-mode: t -*-
 //
-// Copyright (C) 2019-2020 IOTech Ltd
+// Copyright (C) 2019-2021 IOTech Ltd
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -8,20 +8,18 @@ package transformer
 
 import (
 	"bytes"
-	"context"
 	"encoding/binary"
 	"fmt"
 	"math"
 	"strconv"
 
-	"github.com/edgexfoundry/device-sdk-go/internal/cache"
-	"github.com/edgexfoundry/device-sdk-go/internal/common"
-	dsModels "github.com/edgexfoundry/device-sdk-go/pkg/models"
-	"github.com/edgexfoundry/go-mod-core-contracts/clients/logger"
-	"github.com/edgexfoundry/go-mod-core-contracts/clients/metadata"
-	contract "github.com/edgexfoundry/go-mod-core-contracts/models"
-	"github.com/edgexfoundry/go-mod-core-contracts/requests/states/operating"
-	"github.com/google/uuid"
+	"github.com/edgexfoundry/go-mod-core-contracts/v2/clients/logger"
+	"github.com/edgexfoundry/go-mod-core-contracts/v2/v2"
+	"github.com/edgexfoundry/go-mod-core-contracts/v2/v2/clients/interfaces"
+	"github.com/edgexfoundry/go-mod-core-contracts/v2/v2/models"
+
+	"github.com/edgexfoundry/device-sdk-go/v2/internal/common"
+	dsModels "github.com/edgexfoundry/device-sdk-go/v2/pkg/models"
 )
 
 const (
@@ -35,8 +33,8 @@ const (
 	NaN      = "NaN"
 )
 
-func TransformReadResult(cv *dsModels.CommandValue, pv contract.PropertyValue, lc logger.LoggingClient) error {
-	if cv.Type == dsModels.String || cv.Type == dsModels.Bool || cv.Type == dsModels.Binary {
+func TransformReadResult(cv *dsModels.CommandValue, pv models.PropertyValue, lc logger.LoggingClient) error {
+	if cv.Type == v2.ValueTypeString || cv.Type == v2.ValueTypeBool || cv.Type == v2.ValueTypeBinary {
 		return nil // do nothing for String, Bool and Binary
 	}
 	res, err := isNaN(cv)
@@ -50,7 +48,7 @@ func TransformReadResult(cv *dsModels.CommandValue, pv contract.PropertyValue, l
 	newValue := value
 
 	if pv.Mask != "" && pv.Mask != defaultMask &&
-		(cv.Type == dsModels.Uint8 || cv.Type == dsModels.Uint16 || cv.Type == dsModels.Uint32 || cv.Type == dsModels.Uint64) {
+		(cv.Type == v2.ValueTypeUint8 || cv.Type == v2.ValueTypeUint16 || cv.Type == v2.ValueTypeUint32 || cv.Type == v2.ValueTypeUint64) {
 		newValue, err = transformReadMask(newValue, pv.Mask, lc)
 		if err != nil {
 			return err
@@ -58,7 +56,7 @@ func TransformReadResult(cv *dsModels.CommandValue, pv contract.PropertyValue, l
 	}
 
 	if pv.Shift != "" && pv.Shift != defaultShift &&
-		(cv.Type == dsModels.Uint8 || cv.Type == dsModels.Uint16 || cv.Type == dsModels.Uint32 || cv.Type == dsModels.Uint64) {
+		(cv.Type == v2.ValueTypeUint8 || cv.Type == v2.ValueTypeUint16 || cv.Type == v2.ValueTypeUint32 || cv.Type == v2.ValueTypeUint64) {
 		newValue, err = transformReadShift(newValue, pv.Shift, lc)
 		if err != nil {
 			return fmt.Errorf("transform failed for device resource '%v', error: %w ", cv.DeviceResourceName, err)
@@ -532,52 +530,52 @@ func commandValueForTransform(cv *dsModels.CommandValue) (interface{}, error) {
 	var v interface{}
 	var err error = nil
 	switch cv.Type {
-	case dsModels.Uint8:
+	case v2.ValueTypeUint8:
 		v, err = cv.Uint8Value()
 		if err != nil {
 			return 0, err
 		}
-	case dsModels.Uint16:
+	case v2.ValueTypeUint16:
 		v, err = cv.Uint16Value()
 		if err != nil {
 			return 0, err
 		}
-	case dsModels.Uint32:
+	case v2.ValueTypeUint32:
 		v, err = cv.Uint32Value()
 		if err != nil {
 			return 0, err
 		}
-	case dsModels.Uint64:
+	case v2.ValueTypeUint64:
 		v, err = cv.Uint64Value()
 		if err != nil {
 			return 0, err
 		}
-	case dsModels.Int8:
+	case v2.ValueTypeInt8:
 		v, err = cv.Int8Value()
 		if err != nil {
 			return 0, err
 		}
-	case dsModels.Int16:
+	case v2.ValueTypeInt16:
 		v, err = cv.Int16Value()
 		if err != nil {
 			return 0, err
 		}
-	case dsModels.Int32:
+	case v2.ValueTypeInt32:
 		v, err = cv.Int32Value()
 		if err != nil {
 			return 0, err
 		}
-	case dsModels.Int64:
+	case v2.ValueTypeInt64:
 		v, err = cv.Int64Value()
 		if err != nil {
 			return 0, err
 		}
-	case dsModels.Float32:
+	case v2.ValueTypeFloat32:
 		v, err = cv.Float32Value()
 		if err != nil {
 			return 0, err
 		}
-	case dsModels.Float64:
+	case v2.ValueTypeFloat64:
 		v, err = cv.Float64Value()
 		if err != nil {
 			return 0, err
@@ -602,14 +600,13 @@ func replaceNewCommandValue(cv *dsModels.CommandValue, newValue interface{}, lc 
 func CheckAssertion(
 	cv *dsModels.CommandValue,
 	assertion string,
-	device *contract.Device,
+	deviceName string,
 	lc logger.LoggingClient,
-	dc metadata.DeviceClient) error {
+	dc interfaces.DeviceClient) error {
 	if assertion != "" && cv.ValueToString() != assertion {
-		device.OperatingState = contract.Disabled
-		cache.Devices().Update(*device)
-		ctx := context.WithValue(context.Background(), common.CorrelationHeader, uuid.New().String())
-		go dc.UpdateOpStateByName(ctx, device.Name, operating.UpdateRequest{OperatingState: contract.Disabled})
+		//device.OperatingState = models.Down
+		//cache.Devices().Update(*device)
+		go common.UpdateOperatingState(deviceName, models.Down, lc, dc)
 		msg := fmt.Sprintf("assertion (%s) failed with value: %s", assertion, cv.ValueToString())
 		lc.Error(msg)
 		return fmt.Errorf(msg)

@@ -1,7 +1,7 @@
 // -*- Mode: Go; indent-tabs-mode: t -*-
 //
 // Copyright (C) 2017-2018 Canonical Ltd
-// Copyright (C) 2018-2020 IOTech Ltd
+// Copyright (C) 2018-2021 IOTech Ltd
 // Copyright (c) 2019 Intel Corporation
 //
 // SPDX-License-Identifier: Apache-2.0
@@ -14,15 +14,15 @@ import (
 	"fmt"
 	"net/http"
 
-	sdkCommon "github.com/edgexfoundry/device-sdk-go/internal/common"
-	"github.com/edgexfoundry/device-sdk-go/internal/controller/correlation"
-	v2 "github.com/edgexfoundry/device-sdk-go/internal/v2/controller/http"
+	sdkCommon "github.com/edgexfoundry/device-sdk-go/v2/internal/common"
+	"github.com/edgexfoundry/device-sdk-go/v2/internal/controller/correlation"
+	v2 "github.com/edgexfoundry/device-sdk-go/v2/internal/v2/controller/http"
 
-	bootstrapContainer "github.com/edgexfoundry/go-mod-bootstrap/bootstrap/container"
-	"github.com/edgexfoundry/go-mod-bootstrap/di"
+	bootstrapContainer "github.com/edgexfoundry/go-mod-bootstrap/v2/bootstrap/container"
+	"github.com/edgexfoundry/go-mod-bootstrap/v2/di"
 
-	"github.com/edgexfoundry/go-mod-core-contracts/clients/logger"
-	contractsV2 "github.com/edgexfoundry/go-mod-core-contracts/v2"
+	"github.com/edgexfoundry/go-mod-core-contracts/v2/clients/logger"
+	contractsV2 "github.com/edgexfoundry/go-mod-core-contracts/v2/v2"
 
 	"github.com/gorilla/mux"
 )
@@ -47,48 +47,31 @@ func NewRestController(r *mux.Router, dic *di.Container) *RestController {
 }
 
 func (c *RestController) InitRestRoutes() {
-	// Status
-	c.addReservedRoute(sdkCommon.APIPingRoute, c.statusFunc).Methods(http.MethodGet)
-	// Version
-	c.addReservedRoute(sdkCommon.APIVersionRoute, c.versionFunc).Methods(http.MethodGet)
-	// Command
-	c.addReservedRoute(sdkCommon.APIAllCommandRoute, c.commandAllFunc).Methods(http.MethodGet, http.MethodPut)
-	c.addReservedRoute(sdkCommon.APIIdCommandRoute, c.commandFunc).Methods(http.MethodGet, http.MethodPut)
-	c.addReservedRoute(sdkCommon.APINameCommandRoute, c.commandFunc).Methods(http.MethodGet, http.MethodPut)
-	// Callback
-	c.addReservedRoute(sdkCommon.APICallbackRoute, c.callbackFunc)
-	// Discovery and Transform
-	c.addReservedRoute(sdkCommon.APIDiscoveryRoute, c.discoveryFunc).Methods(http.MethodPost)
-	c.addReservedRoute(sdkCommon.APITransformRoute, c.transformFunc).Methods(http.MethodGet)
-	// Metric and Config
-	c.addReservedRoute(sdkCommon.APIMetricsRoute, c.metricsFunc).Methods(http.MethodGet)
-	c.addReservedRoute(sdkCommon.APIConfigRoute, c.configFunc).Methods(http.MethodGet)
-
-	c.InitV2RestRoutes()
-
-	c.router.Use(correlation.ManageHeader)
-	c.router.Use(correlation.OnResponseComplete)
-	c.router.Use(correlation.OnRequestBegin)
-}
-
-func (c *RestController) InitV2RestRoutes() {
 	c.LoggingClient.Info("Registering v2 routes...")
-
+	// common
 	c.addReservedRoute(contractsV2.ApiPingRoute, c.v2HttpController.Ping).Methods(http.MethodGet)
 	c.addReservedRoute(contractsV2.ApiVersionRoute, c.v2HttpController.Version).Methods(http.MethodGet)
 	c.addReservedRoute(contractsV2.ApiConfigRoute, c.v2HttpController.Config).Methods(http.MethodGet)
 	c.addReservedRoute(contractsV2.ApiMetricsRoute, c.v2HttpController.Metrics).Methods(http.MethodGet)
+	// secret
+	c.addReservedRoute(sdkCommon.APIV2SecretRoute, c.v2HttpController.Secret).Methods(http.MethodPost)
+	// discovery
+	c.addReservedRoute(contractsV2.ApiDiscoveryRoute, c.v2HttpController.Discovery).Methods(http.MethodPost)
+	// device command
+	c.addReservedRoute(contractsV2.ApiDeviceNameCommandNameRoute, c.v2HttpController.Command).Methods(http.MethodPut, http.MethodGet)
+	// callback
+	c.addReservedRoute(contractsV2.ApiDeviceCallbackRoute, c.v2HttpController.AddDevice).Methods(http.MethodPost)
+	c.addReservedRoute(contractsV2.ApiDeviceCallbackRoute, c.v2HttpController.UpdateDevice).Methods(http.MethodPut)
+	c.addReservedRoute(contractsV2.ApiDeviceCallbackNameRoute, c.v2HttpController.DeleteDevice).Methods(http.MethodDelete)
+	c.addReservedRoute(contractsV2.ApiProfileCallbackRoute, c.v2HttpController.UpdateProfile).Methods(http.MethodPut)
+	c.addReservedRoute(contractsV2.ApiProvisionWatcherRoute, c.v2HttpController.AddProvisionWatcher).Methods(http.MethodPost)
+	c.addReservedRoute(contractsV2.ApiProvisionWatcherRoute, c.v2HttpController.UpdateProvisionWatcher).Methods(http.MethodPut)
+	c.addReservedRoute(contractsV2.ApiProvisionWatcherByNameRoute, c.v2HttpController.DeleteProvisionWatcher).Methods(http.MethodDelete)
+	c.addReservedRoute(contractsV2.ApiServiceCallbackRoute, c.v2HttpController.UpdateDeviceService).Methods(http.MethodPut)
 
-	c.addReservedRoute(sdkCommon.APIV2DiscoveryRoute, c.v2HttpController.Discovery).Methods(http.MethodPost)
-
-	c.addReservedRoute(sdkCommon.APIV2IdCommandRoute, c.v2HttpController.Command).Methods(http.MethodPut, http.MethodGet)
-	c.addReservedRoute(sdkCommon.APIV2NameCommandRoute, c.v2HttpController.Command).Methods(http.MethodPut, http.MethodGet)
-
-	c.addReservedRoute(sdkCommon.APIV2DeviceCallbackRoute, c.v2HttpController.AddDevice).Methods(http.MethodPost)
-	c.addReservedRoute(sdkCommon.APIV2DeviceCallbackRoute, c.v2HttpController.UpdateDevice).Methods(http.MethodPut)
-	c.addReservedRoute(sdkCommon.APIV2DeviceCallbackIdRoute, c.v2HttpController.DeleteDevice).Methods(http.MethodDelete)
-	c.addReservedRoute(sdkCommon.APIV2ProfileCallbackRoute, c.v2HttpController.AddUpdateProfile).Methods(http.MethodPut, http.MethodPost)
-	c.addReservedRoute(sdkCommon.APIV2ProfileCallbackIdRoute, c.v2HttpController.DeleteProfile).Methods(http.MethodDelete)
+	c.router.Use(correlation.ManageHeader)
+	c.router.Use(correlation.OnResponseComplete)
+	c.router.Use(correlation.OnRequestBegin)
 }
 
 func (c *RestController) addReservedRoute(route string, handler func(http.ResponseWriter, *http.Request)) *mux.Route {

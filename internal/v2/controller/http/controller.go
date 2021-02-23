@@ -11,15 +11,15 @@ import (
 	"fmt"
 	"net/http"
 
-	sdkCommon "github.com/edgexfoundry/device-sdk-go/internal/common"
+	sdkCommon "github.com/edgexfoundry/device-sdk-go/v2/internal/common"
 
-	bootstrapContainer "github.com/edgexfoundry/go-mod-bootstrap/bootstrap/container"
-	"github.com/edgexfoundry/go-mod-bootstrap/di"
+	bootstrapContainer "github.com/edgexfoundry/go-mod-bootstrap/v2/bootstrap/container"
+	"github.com/edgexfoundry/go-mod-bootstrap/v2/di"
 
-	"github.com/edgexfoundry/go-mod-core-contracts/clients"
-	"github.com/edgexfoundry/go-mod-core-contracts/clients/logger"
-	"github.com/edgexfoundry/go-mod-core-contracts/errors"
-	"github.com/edgexfoundry/go-mod-core-contracts/v2/dtos/common"
+	"github.com/edgexfoundry/go-mod-core-contracts/v2/clients"
+	"github.com/edgexfoundry/go-mod-core-contracts/v2/clients/logger"
+	"github.com/edgexfoundry/go-mod-core-contracts/v2/errors"
+	"github.com/edgexfoundry/go-mod-core-contracts/v2/v2/dtos/common"
 )
 
 // V2HttpController controller for V2 REST APIs
@@ -76,6 +76,6 @@ func (c *V2HttpController) sendEdgexError(
 	correlationID := request.Header.Get(sdkCommon.CorrelationHeader)
 	c.lc.Error(err.Error(), sdkCommon.CorrelationHeader, correlationID)
 	c.lc.Debug(err.DebugMessages(), sdkCommon.CorrelationHeader, correlationID)
-	response := common.NewBaseResponse("", err.Message(), err.Code())
+	response := common.NewBaseResponse("", err.Error(), err.Code())
 	c.sendResponse(writer, request, api, response, err.Code())
 }

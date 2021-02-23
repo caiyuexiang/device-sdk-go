@@ -215,6 +215,29 @@ components:
           items:
             $ref: '#/components/schemas/Command'
           description: "Defines commands that are accessible via the core-command service,"
+    UpdateDeviceService:
+      description: "A DeviceService is responsible for proxying connectivity between a set of devices and the EdgeX Foundry core services."
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: ID uniquely identifies the device, a UUID for example
+        name:
+          type: string
+          description: Non-database identifier(must be unique)
+        labels:
+          type: array
+          description: tags or other labels applied to the device service for search or other identification needs
+          items:
+            type: string
+        baseAddress:
+          type: string
+          description: BaseAddress is a fully qualified URI, e.g. <protocol>:\\<hostname>:<port>/<optional path>
+        adminState:
+          type: string
+          enum: [locked, unlocked]
+          description: Device Service Admin State
     DeviceResource:
       description: "DeviceResource represents a value on a device that can be read or written."
       type: object
@@ -232,6 +255,118 @@ components:
           additionalProperties:
             type: string
           description: "The attributes define how the value is addressed on the device"
+    BaseReading:
+      description: "A base reading type containing common properties from which more specific reading types inherit. This definition should not be implemented but is used elsewhere to indicate support for a mixed list of simple/binary readings in a single event."
+      type: object
+      properties:
+        apiVersion:
+          description: "A version number shows the API version in DTOs."
+          type: string
+        id:
+          description: "The unique identifier for the reading"
+          type: string
+          format: uuid
+        created:
+          description: "A Unix timestamp indicating when (if) the reading was initially persisted to a database."
+          type: integer
+        origin:
+          description: "A Unix timestamp indicating when the reading was originated at the source device (can support nanoseconds)"
+          type: integer
+        deviceName:
+          description: "The name of the device from which the reading originated"
+          type: string
+        resourceName:
+          description: "The device resource name for the reading"
+          type: string
+        profileName:
+          description: "The device profile name for the reading"
+          type: string
+        valueType:
+          description: "Indicates the datatype of the value property"
+          type: string
+      required:
+        - deviceName
+        - resourceName
+        - profileName
+        - origin
+        - valueType
+    SimpleReading:
+      description: "An event reading for a simple data type"
+      allOf:
+        - $ref: '#/components/schemas/BaseReading'
+        - type: object
+          properties:
+            value:
+              description: "A string representation of the reading's value"
+              type: string
+      required:
+        - value
+    BinaryReading:
+      description: "An event reading for a binary data type"
+      allOf:
+        - $ref: '#/components/schemas/BaseReading'
+        - type: object
+          properties:
+            binaryValue:
+              description: "If the value of the reading is binary, it will be found in this property as a byte array"
+              type: string
+              format: byte
+            mediaType:
+              description: "E.g. MIME Type, indicates what the content type of the binaryValue property is if it's populated."
+              type: string
+          required:
+            - binaryValue
+            - mediaType
+    Event:
+      description: "A discrete event containing one or more readings"
+      properties:
+        apiVersion:
+          description: "A version number shows the API version in DTOs."
+          type: string
+        id:
+          description: "The unique identifier for the event"
+          type: string
+          format: uuid
+        deviceName:
+          description: "The name of the device from which the event originated"
+          type: string
+        profileName:
+          description: "The name of the device profile from which the event originated"
+          type: string
+        created:
+          description: "A Unix timestamp indicating when (if) the event was initially persisted to a database."
+          type: integer
+        origin:
+          description: "A Unix timestamp indicating when the event was originated at the source device (can support nanoseconds)"
+          type: integer
+        readings:
+          description: "One or more readings captured at the time of the event"
+          type: array
+          items:
+            $ref: '#/components/schemas/SimpleReading'
+        tags:
+          description: "List of zero or more Tags attached to the Event which give more context to the Event"
+          title: tags
+          type: object
+          example: {
+            "Gateway-id": "HoustonStore-000123",
+            "Latitude": "29.630771",
+            "Longitude": "-95.377603",
+          }
+      required:
+        - id
+        - deviceName
+        - profileName
+        - origin
+        - readings
+    EventResponse:
+      allOf:
+        - $ref: '#/components/schemas/BaseResponse'
+      description: "A response type for returning an Event to the caller."
+      type: object
+      properties:
+        event:
+          $ref: '#/components/schemas/Event'
     ErrorResponse:
       allOf:
         - $ref: '#/components/schemas/BaseResponse'
@@ -302,10 +437,10 @@ components:
       description: "Notification that a new provision watcher associated with this device service has been created."
       type: object
       properties:
-        watcher:
+        provisionWatcher:
           $ref: '#/components/schemas/ProvisionWatcher'
       required:
-        - watcher
+        - provisionWatcher
     NewEventResponse:
       description: "A discrete event containing one or more readings"
       properties:
@@ -420,27 +555,37 @@ components:
         modified:
           type: integer
           description: "A Unix timestamp indicating when the object was last modified"
+        labels:
+          type: array
+          description: "Labels applied to the provision watcher to help with searching"
+          items:
+            type: string
         identifiers:
           type: object
           additionalProperties:
             type: string
           description: "Properties of a new device which must match in order for this provision watcher to match the new device"
-        blockingidentifiers:
+        blockingIdentifiers:
           type: object
           additionalProperties:
             type: array
             items:
               type: string
           description: "Properties of a new device which must not match in order for this provision watcher to match the new device"
-        service:
+        serviceName:
           type: string
           description: "The device service to which to associate devices which match this watcher"
-        profile:
+        profileName:
           type: string
           description: "The device profile to which to associate devices which match this watcher"
         adminState:
           type: string
           description: "The initial administrative state to apply to devices which match this watcher"
+        autoEvents:
+          type: array
+          description: "Autoevents that allow device service to automatically start generating data from new devices"
+          items:
+            $ref: '#/components/schemas/AutoEvent'
     ResourceOperation:
       description: "Defines an operation of which a device is capable."
       type: object
@@ -481,6 +626,39 @@ components:
             value:
               description: "A string representation of the reading's value"
               type: string
+    SecretRequest:
+      allOf:
+        - $ref: '#/components/schemas/BaseRequest'
+      description: Defines the secret data to be stored
+      type: object
+      properties:
+        path:
+          description: Specifies the location within the secret to store
+          type: string
+          example: "credentials"
+        secretData:
+          description: A list of the key/value pairs of secret data to store
+          type: array
+          items:
+            $ref: '#/components/schemas/SecretDataKeyValue'
+      required:
+        - path
+        - secretData
+    SecretDataKeyValue:
+      description: Defines a key/value pair of the secret data
+      type: object
+      properties:
+        key:
+          description: The key to identify the secret
+          type: string
+          example: "username"
+        value:
+          description: The value of the secret
+          type: string
+          example: "mqtt-user"
+      required:
+        - key
+        - value
     SettingRequest:
       description: "Defines new values to be written to device resources, as part of an actuation (put) command to a device"
       additionalProperties:
@@ -514,10 +692,20 @@ components:
       description: "Notification that an existing provision watcher associated with this device service has been updated."
       type: object
       properties:
-        watcher:
+        provisionWatcher:
           $ref: '#/components/schemas/ProvisionWatcher'
       required:
-        - watcher
+        - provisionWatcher
+    UpdateDeviceServiceRequest:
+      allOf:
+        - $ref: '#/components/schemas/BaseRequest'
+      description: "A request to update an existing device service definition. 'id' and 'name' must be populated in order to identify the service. Any other property that is populated in the request will be updated. Empty/blank properties will not be considered."
+      type: object
+      properties:
+        service:
+          $ref: '#/components/schemas/UpdateDeviceService'
+      required:
+        - service
     VersionResponse:
       description: "A response returned from the /version endpoint whose purpose is to report out the latest version supported by the service."
       allOf:
@@ -559,11 +747,15 @@ paths:
     post:
       description: "This call is used by core-metadata to inform the device service of the creation of a new Device"
       responses:
-        '204':
-          description: Indicating success of the operation and no content returned.
+        '200':
+          description: "Callback successful"
           headers:
             X-Correlation-ID:
               $ref: '#/components/headers/correlatedResponseHeader'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BaseResponse'
         '400':
           description: Invalid callback request.
           headers:
@@ -591,11 +783,15 @@ paths:
     put:
       description: "This call is used by core-metadata to inform the device service that a Device's characteristics have been updated"
       responses:
-        '204':
-          description: Indicating success of the operation and no content returned.
+        '200':
+          description: "Callback successful"
           headers:
             X-Correlation-ID:
               $ref: '#/components/headers/correlatedResponseHeader'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BaseResponse'
         '400':
           description: Invalid callback request.
           headers:
@@ -630,24 +826,27 @@ paths:
               $ref: '#/components/schemas/UpdateDeviceRequest'
         required: true
 
-  /callback/device/id/{id}:
+  /callback/device/name/{name}:
     parameters:
       - $ref: '#/components/parameters/correlatedRequestHeader'
-      - name: id
+      - name: name
         in: path
         required: true
         schema:
           type: string
-          format: uuid
-        description: "An ID of datatype string, by default a GUID."
+        description: "The unique name of a device"
     delete:
       description: "This call is used by core-metadata to inform the device service that a Device has been deleted"
       responses:
-        '204':
-          description: Indicating success of the operation and no content returned.
+        '200':
+          description: "Callback successful"
           headers:
             X-Correlation-ID:
               $ref: '#/components/headers/correlatedResponseHeader'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BaseResponse'
         '404':
           description: No device exists for the ID provided.
           headers:
@@ -670,46 +869,18 @@ paths:
   /callback/profile:
     parameters:
       - $ref: '#/components/parameters/correlatedRequestHeader'
-    post:
-      description: "This call is used by core-metadata to inform the device service of the creation of a new Device Profile"
-      responses:
-        '204':
-          description: Indicating success of the operation and no content returned.
-          headers:
-            X-Correlation-ID:
-              $ref: '#/components/headers/correlatedResponseHeader'
-        '400':
-          description: Invalid callback request.
-          headers:
-            X-Correlation-ID:
-              $ref: '#/components/headers/correlatedResponseHeader'
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        '500':
-          description: Internal server error.
-          headers:
-            X-Correlation-ID:
-              $ref: '#/components/headers/correlatedResponseHeader'
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/NewProfileRequest'
-        required: true
     put:
       description: "This call is used by core-metadata to inform the device service that a Device Profile has been updated"
       responses:
-        '204':
-          description: Indicating success of the operation and no content returned.
+        '200':
+          description: "Callback successful"
           headers:
             X-Correlation-ID:
               $ref: '#/components/headers/correlatedResponseHeader'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BaseResponse'
         '400':
           description: Invalid callback request.
           headers:
@@ -743,43 +914,6 @@ paths:
             schema:
               $ref: '#/components/schemas/UpdateProfileRequest'
         required: true
-
-  /callback/profile/id/{id}:
-    parameters:
-      - $ref: '#/components/parameters/correlatedRequestHeader'
-      - name: id
-        in: path
-        required: true
-        schema:
-          type: string
-          format: uuid
-        description: "An ID of datatype string, by default a GUID."
-    delete:
-      description: "This call is used by core-metadata to inform the device service that a Device Profile has been deleted"
-      responses:
-        '204':
-          description: Indicating success of the operation and no content returned.
-          headers:
-            X-Correlation-ID:
-              $ref: '#/components/headers/correlatedResponseHeader'
-        '404':
-          description: No device profile exists for the ID provided.
-          headers:
-            X-Correlation-ID:
-              $ref: '#/components/headers/correlatedResponseHeader'
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        '500':
-          description: Internal server error.
-          headers:
-            X-Correlation-ID:
-              $ref: '#/components/headers/correlatedResponseHeader'
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
 
   /callback/watcher:
     parameters:
@@ -858,16 +992,64 @@ paths:
               $ref: '#/components/schemas/UpdateProvisionWatcherRequest'
         required: true
 
-  /callback/watcher/id/{id}:
+  /callback/service:
     parameters:
       - $ref: '#/components/parameters/correlatedRequestHeader'
-      - name: id
+    put:
+      description: "This call is used by core-metadata to inform the device service that its characteristics have been updated"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateDeviceServiceRequest'
+        required: true
+      responses:
+        '200':
+          description: "Callback successful"
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/correlatedResponseHeader'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BaseResponse'
+        '400':
+          description: Invalid callback request.
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/correlatedResponseHeader'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: The device doesn't exist.
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/correlatedResponseHeader'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error.
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/correlatedResponseHeader'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /callback/watcher/name/{name}:
+    parameters:
+      - $ref: '#/components/parameters/correlatedRequestHeader'
+      - name: name
         in: path
         required: true
         schema:
           type: string
-          format: uuid
-        description: "An ID of datatype string, by default a GUID."
+        description: "The unique name of a provision watcher"
     delete:
       description: "This call is used by core-metadata to inform the device service that a Provision Watcher has been deleted"
       responses:
@@ -905,15 +1087,17 @@ paths:
           required: true
           schema:
             type: string
-          example: sensor
+          example: sensor01
+          description: "A name uniquely identifying a device."
         - in: path
           name: command
           required: true
           schema:
             type: string
-          example: allValues
+          example: command01
+          description: "A name uniquely identifying a command."
         - in: query
-          name: ds-postevent
+          name: ds-pushevent
           schema:
             type: string
             enum:
@@ -921,6 +1105,7 @@ paths:
               - no
             default: no
           example: yes
+          description: "If set to yes, a successful GET will result in an event being pushed to the EdgeX system"
         - in: query
           name: ds-returnevent
           schema:
@@ -930,6 +1115,7 @@ paths:
               - no
             default: yes
           example: no
+          description: "If set to no, there will be no Event returned in the http response"
       responses:
         '200':
           description: String as returned by the device/sensor through the device service.
@@ -939,7 +1125,7 @@ paths:
           content:
             'application/json':
               schema:
-                $ref: '#/components/schemas/NewEventResponse'
+                $ref: '#/components/schemas/EventResponse'
         '404':
           description: If no device exists by the name provided or the command is unknown.
           headers:
@@ -998,6 +1184,10 @@ paths:
           headers:
             X-Correlation-ID:
               $ref: '#/components/headers/correlatedResponseHeader'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BaseResponse'
         '404':
           description: If no device exists for the name provided or the command is unknown.
           headers:
@@ -1041,151 +1231,47 @@ paths:
               $ref: '#/components/schemas/SettingRequest'
         required: true
 
-  /device/{id}/{command}:
-    get:
-      description: Request the device/sensor by its id to return the current (or in some cases new) event/reading values for the command or device resource specified. The device service may have cached the latest event/reading for the sensor(s) or it may immediate request new event/reading values depending on the implementation and the device(s)/sensor(s) capability.
-      parameters:
-        - $ref: '#/components/parameters/correlatedRequestHeader'
-        - in: path
-          name: id
-          required: true
-          schema:
-            type: string
-          example: b4081782-a611-4180-848a-cf8235e6351d
-        - in: path
-          name: command
-          required: true
-          schema:
-            type: string
-          example: allValues
-        - in: query
-          name: ds-postevent
-          schema:
-            type: string
-            enum:
-              - yes
-              - no
-            default: no
-          example: yes
-        - in: query
-          name: ds-returnevent
-          schema:
-            type: string
-            enum:
-              - yes
-              - no
-            default: yes
-          example: no
-      responses:
-        '200':
-          description: String as returned by the device/sensor through the device service.
-          headers:
-            X-Correlation-ID:
-              $ref: '#/components/headers/correlatedResponseHeader'
-          content:
-            'application/json':
-              schema:
-                $ref: '#/components/schemas/NewEventResponse'
-        '404':
-          description: If no device exists by the id provided or the command is unknown.
-          headers:
-            X-Correlation-ID:
-              $ref: '#/components/headers/correlatedResponseHeader'
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        '405':
-          description: If the requested command exists but not for GET, or the resource is marked as write-only.
-          headers:
-            X-Correlation-ID:
-              $ref: '#/components/headers/correlatedResponseHeader'
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        '423':
-          description: If the device or service is locked (admin state) or disabled (operating state).
-          headers:
-            X-Correlation-ID:
-              $ref: '#/components/headers/correlatedResponseHeader'
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        '500':
-          description: The device driver is unable to process the request, or too many values were returned.
-          headers:
-            X-Correlation-ID:
-              $ref: '#/components/headers/correlatedResponseHeader'
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-    put:
-      description: Request the actuator by its id to trigger a action or set a current value for the command or device resource specified.
-      parameters:
-        - $ref: '#/components/parameters/correlatedRequestHeader'
-        - in: path
-          name: id
-          required: true
-          schema:
-            type: string
-          example: b4081782-a611-4180-848a-cf8235e6351d
-        - in: path
-          name: command
-          required: true
-          schema:
-            type: string
-          example: allValues
-      responses:
-        '200':
-          description: The PUT command was successful.
-          headers:
-            X-Correlation-ID:
-              $ref: '#/components/headers/correlatedResponseHeader'
-        '404':
-          description: If no device exists for the ID provided or the command is unknown.
-          headers:
-            X-Correlation-ID:
-              $ref: '#/components/headers/correlatedResponseHeader'
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        '405':
-          description: If the requested command exists but not for PUT, or the resource is marked as read-only.
-          headers:
-            X-Correlation-ID:
-              $ref: '#/components/headers/correlatedResponseHeader'
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        '423':
-          description: If the device or service is locked (admin state) or disabled (operating state).
-          headers:
-            X-Correlation-ID:
-              $ref: '#/components/headers/correlatedResponseHeader'
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        '500':
-          description: The device driver is unable to process the request.
-          headers:
-            X-Correlation-ID:
-              $ref: '#/components/headers/correlatedResponseHeader'
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
+  /secret:
+    parameters:
+      - $ref: '#/components/parameters/correlatedRequestHeader'
+    post:
+      summary: Stores a secret to the secure Secret Store
       requestBody:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/SettingRequest'
+              allOf:
+                - $ref: '#/components/schemas/SecretRequest'
         required: true
+      responses:
+        '201':
+          description: "Created"
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/correlatedResponseHeader'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BaseResponse'
+        '400':
+          description: "Invalid request."
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/correlatedResponseHeader'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: "An unexpected error happened on the server."
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/correlatedResponseHeader'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
 
   /discovery:
     post:
