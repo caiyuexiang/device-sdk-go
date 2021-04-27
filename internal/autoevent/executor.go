@@ -20,14 +20,13 @@ import (
 	"github.com/edgexfoundry/go-mod-core-contracts/v2/v2/dtos"
 	"github.com/edgexfoundry/go-mod-core-contracts/v2/v2/models"
 
+	"github.com/edgexfoundry/device-sdk-go/v2/internal/application"
 	"github.com/edgexfoundry/device-sdk-go/v2/internal/common"
-	"github.com/edgexfoundry/device-sdk-go/v2/internal/container"
-	"github.com/edgexfoundry/device-sdk-go/v2/internal/v2/application"
 )
 
 type Executor struct {
 	deviceName   string
-	resource     string
+	sourceName   string
 	onChange     bool
 	lastReadings map[string]interface{}
 	duration     time.Duration
@@ -35,7 +34,7 @@ type Executor struct {
 	mutex        *sync.Mutex
 }
 
-// Run triggers this Executor executes the handler for the resource periodically
+// Run triggers this Executor executes the handler for the event source periodically
 func (e *Executor) Run(ctx context.Context, wg *sync.WaitGroup, buffer chan bool, dic *di.Container) {
 	wg.Add(1)
 	defer wg.Done()
@@ -49,16 +48,10 @@ func (e *Executor) Run(ctx context.Context, wg *sync.WaitGroup, buffer chan bool
 			if e.stop {
 				return
 			}
-			ds := container.DeviceServiceFrom(dic.Get)
-			if ds.AdminState == models.Locked {
-				lc.Info("AutoEvent - stopped for locked device service")
-				return
-			}
-
-			lc.Debugf("AutoEvent - reading %s", e.resource)
+			lc.Debugf("AutoEvent - reading %s", e.sourceName)
 			evt, err := readResource(e, dic)
 			if err != nil {
-				lc.Errorf("AutoEvent - error occurs when reading resource %s: %v", e.resource, err)
+				lc.Errorf("AutoEvent - error occurs when reading resource %s: %v", e.sourceName, err)
 				continue
 			}
 
@@ -75,11 +68,11 @@ func (e *Executor) Run(ctx context.Context, wg *sync.WaitGroup, buffer chan bool
 				// By adding a buffer here, the user can use the Service.AsyncBufferSize configuration to control the goroutine for sending events.
 				go func() {
 					buffer <- true
-					common.SendEvent(*evt, "", lc, container.CoredataEventClientFrom(dic.Get))
+					common.SendEvent(evt, "", dic)
 					<-buffer
 				}()
 			} else {
-				lc.Debugf("AutoEvent - no event generated when reading resource %s", e.resource)
+				lc.Debugf("AutoEvent - no event generated when reading resource %s", e.sourceName)
 			}
 		}
 	}
@@ -88,13 +81,13 @@ func (e *Executor) Run(ctx context.Context, wg *sync.WaitGroup, buffer chan bool
 func readResource(e *Executor, dic *di.Container) (event *dtos.Event, err errors.EdgeX) {
 	vars := make(map[string]string, 2)
 	vars[v2.Name] = e.deviceName
-	vars[v2.Command] = e.resource
+	vars[v2.Command] = e.sourceName
 
 	res, err := application.CommandHandler(true, false, "", vars, "", "", dic)
 	if err != nil {
 		return event, err
 	}
-	return &res, nil
+	return res, nil
 }
 
 func (e *Executor) compareReadings(readings []dtos.BaseReading) bool {
@@ -151,12 +144,12 @@ func NewExecutor(deviceName string, ae models.AutoEvent) (*Executor, errors.Edge
 	// check Frequency
 	duration, err := time.ParseDuration(ae.Frequency)
 	if err != nil {
-		return nil, errors.NewCommonEdgeX(errors.KindServerError, fmt.Sprintf("failed to parse AutoEvent %s duration", ae.Resource), err)
+		return nil, errors.NewCommonEdgeX(errors.KindServerError, fmt.Sprintf("failed to parse AutoEvent %s duration", ae.SourceName), err)
 	}
 
 	return &Executor{
 		deviceName: deviceName,
-		resource:   ae.Resource,
+		sourceName: ae.SourceName,
 		onChange:   ae.OnChange,
 		duration:   duration,
 		stop:       false,

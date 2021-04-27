@@ -17,8 +17,11 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"sync"
 
+	bootstrapConfig "github.com/edgexfoundry/go-mod-bootstrap/v2/bootstrap/config"
 	bootstrapContainer "github.com/edgexfoundry/go-mod-bootstrap/v2/bootstrap/container"
+	"github.com/edgexfoundry/go-mod-bootstrap/v2/bootstrap/flags"
 	"github.com/edgexfoundry/go-mod-bootstrap/v2/bootstrap/interfaces"
 	"github.com/edgexfoundry/go-mod-bootstrap/v2/di"
 	"github.com/edgexfoundry/go-mod-core-contracts/v2/clients/logger"
@@ -32,8 +35,9 @@ import (
 
 	"github.com/edgexfoundry/device-sdk-go/v2/internal/clients"
 	"github.com/edgexfoundry/device-sdk-go/v2/internal/common"
+	"github.com/edgexfoundry/device-sdk-go/v2/internal/config"
 	"github.com/edgexfoundry/device-sdk-go/v2/internal/container"
-	"github.com/edgexfoundry/device-sdk-go/v2/internal/controller"
+	restController "github.com/edgexfoundry/device-sdk-go/v2/internal/controller/http"
 	dsModels "github.com/edgexfoundry/device-sdk-go/v2/pkg/models"
 )
 
@@ -41,21 +45,36 @@ var (
 	ds *DeviceService
 )
 
+// UpdatableConfig interface allows services to have custom configuration populated from configuration stored
+// in the Configuration Provider (aka Consul). Services using custom configuration must implement this interface
+// on their custom configuration, even if they do not use Configuration Provider. If they do not use the
+// Configuration Provider they can have a dummy implementation of this interface.
+// This wraps the actual interface from go-mod-bootstrap so device service code doesn't have to have the additional
+// direct import of go-mod-bootstrap.
+type UpdatableConfig interface {
+	interfaces.UpdatableConfig
+}
+
 type DeviceService struct {
-	ServiceName    string
-	LoggingClient  logger.LoggingClient
-	RegistryClient registry.Client
-	SecretProvider interfaces.SecretProvider
-	edgexClients   clients.EdgeXClients
-	controller     *controller.RestController
-	config         *common.ConfigurationStruct
-	deviceService  *models.DeviceService
-	driver         dsModels.ProtocolDriver
-	discovery      dsModels.ProtocolDiscovery
-	manager        dsModels.AutoEventManager
-	asyncCh        chan *dsModels.AsyncValues
-	deviceCh       chan []dsModels.DiscoveredDevice
-	initialized    bool
+	ServiceName     string
+	LoggingClient   logger.LoggingClient
+	RegistryClient  registry.Client
+	SecretProvider  interfaces.SecretProvider
+	edgexClients    clients.EdgeXClients
+	controller      *restController.RestController
+	config          *config.ConfigurationStruct
+	deviceService   *models.DeviceService
+	driver          dsModels.ProtocolDriver
+	discovery       dsModels.ProtocolDiscovery
+	manager         dsModels.AutoEventManager
+	asyncCh         chan *dsModels.AsyncValues
+	deviceCh        chan []dsModels.DiscoveredDevice
+	initialized     bool
+	dic             *di.Container
+	flags           flags.Common
+	configProcessor *bootstrapConfig.Processor
+	ctx             context.Context
+	wg              *sync.WaitGroup
 }
 
 func (s *DeviceService) Initialize(serviceName, serviceVersion string, proto interface{}) {
@@ -84,7 +103,7 @@ func (s *DeviceService) Initialize(serviceName, serviceVersion string, proto int
 		s.discovery = nil
 	}
 
-	s.config = &common.ConfigurationStruct{}
+	s.config = &config.ConfigurationStruct{}
 }
 
 func (s *DeviceService) UpdateFromContainer(r *mux.Router, dic *di.Container) {
@@ -98,7 +117,7 @@ func (s *DeviceService) UpdateFromContainer(r *mux.Router, dic *di.Container) {
 	s.edgexClients.EventClient = container.CoredataEventClientFrom(dic.Get)
 	s.config = container.ConfigurationFrom(dic.Get)
 	s.manager = container.ManagerFrom(dic.Get)
-	s.controller = controller.NewRestController(r, dic)
+	s.controller = restController.NewRestController(r, dic)
 }
 
 // Name returns the name of this Device Service
@@ -128,13 +147,42 @@ func (s *DeviceService) AddRoute(route string, handler func(http.ResponseWriter,
 // Stop shuts down the Service
 func (s *DeviceService) Stop(force bool) {
 	if s.initialized {
-		_ = s.driver.Stop(false)
+		err := s.driver.Stop(force)
+		if err != nil {
+			s.LoggingClient.Error(err.Error())
+		}
 	}
-	s.manager.StopAutoEvents()
+}
+
+// LoadCustomConfig uses the Config Processor from go-mod-bootstrap to attempt to load service's
+// custom configuration. It uses the same command line flags to process the custom config in the same manner
+// as the standard configuration.
+func (s *DeviceService) LoadCustomConfig(customConfig UpdatableConfig, sectionName string) error {
+	if s.configProcessor == nil {
+		s.configProcessor = bootstrapConfig.NewProcessorForCustomConfig(s.flags, s.ctx, s.wg, s.dic)
+	}
+	return s.configProcessor.LoadCustomConfigSection(customConfig, sectionName)
+}
+
+// ListenForCustomConfigChanges uses the Config Processor from go-mod-bootstrap to attempt to listen for
+// changes to the specified custom configuration section. LoadCustomConfig must be called previously so that
+// the instance of svc.configProcessor has already been set.
+func (s *DeviceService) ListenForCustomConfigChanges(
+	configToWatch interface{},
+	sectionName string,
+	changedCallback func(interface{})) error {
+	if s.configProcessor == nil {
+		return fmt.Errorf(
+			"custom configuration must be loaded before '%s' section can be watched for changes",
+			sectionName)
+	}
+
+	s.configProcessor.ListenForCustomConfigChanges(configToWatch, sectionName, changedCallback)
+	return nil
 }
 
 // selfRegister register device service itself onto metadata.
-func (s *DeviceService) selfRegister() error {
+func (s *DeviceService) selfRegister() errors.EdgeX {
 	newDeviceService := models.DeviceService{
 		Name:        s.ServiceName,
 		Labels:      s.config.Service.Labels,

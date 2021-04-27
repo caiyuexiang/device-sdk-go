@@ -43,9 +43,20 @@ func Main(serviceName string, serviceVersion string, proto interface{}, ctx cont
 	ds = &DeviceService{}
 	ds.Initialize(serviceName, serviceVersion, proto)
 
-	dic := di.NewContainer(di.ServiceConstructorMap{
+	ds.flags = sdkFlags
+
+	ds.dic = di.NewContainer(di.ServiceConstructorMap{
 		container.ConfigurationName: func(get di.Get) interface{} {
 			return ds.config
+		},
+		container.DeviceServiceName: func(get di.Get) interface{} {
+			return ds.deviceService
+		},
+		container.ProtocolDriverName: func(get di.Get) interface{} {
+			return ds.driver
+		},
+		container.ProtocolDiscoveryName: func(get di.Get) interface{} {
+			return ds.discovery
 		},
 	})
 
@@ -56,14 +67,14 @@ func Main(serviceName string, serviceVersion string, proto interface{}, ctx cont
 		cancel,
 		sdkFlags,
 		ds.ServiceName,
-		common.ConfigStemDevice+common.ConfigMajorVersion,
+		common.ConfigStemDevice,
 		ds.config,
 		startupTimer,
-		dic,
+		ds.dic,
+		true,
 		[]interfaces.BootstrapHandler{
-			handlers.SecureProviderBootstrapHandler,
 			httpServer.BootstrapHandler,
-			clients.NewClients().BootstrapHandler,
+			clients.BootstrapHandler,
 			autoevent.BootstrapHandler,
 			NewBootstrap(router).BootstrapHandler,
 			autodiscovery.BootstrapHandler,

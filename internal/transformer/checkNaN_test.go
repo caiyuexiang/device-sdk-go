@@ -1,40 +1,47 @@
 // -*- Mode: Go; indent-tabs-mode: t -*-
 //
-// Copyright (C) 2020 IOTech Ltd
+// Copyright (C) 2020-2021 IOTech Ltd
 //
 // SPDX-License-Identifier: Apache-2.0
 
 package transformer
 
 import (
-	"errors"
 	"math"
 	"testing"
 
-	"github.com/edgexfoundry/go-mod-core-contracts/v2/v2/models"
-
-	dsModels "github.com/edgexfoundry/device-sdk-go/v2/pkg/models"
-
+	"github.com/edgexfoundry/go-mod-core-contracts/v2/v2"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/edgexfoundry/device-sdk-go/v2/pkg/models"
 )
 
-func TestTransformReadResult_NaN(t *testing.T) {
-	ro := models.ResourceOperation{DeviceResource: "test-object"}
-	float32Val, _ := dsModels.NewFloat32Value(ro.DeviceResource, 0, float32(math.NaN()))
-	float64Val, _ := dsModels.NewFloat64Value(ro.DeviceResource, 0, math.NaN())
+func Test_isNaN(t *testing.T) {
+	validFloat32, err := models.NewCommandValue("test-resource", v2.ValueTypeFloat32, float32(1.234))
+	require.NoError(t, err)
+	validFloat64, err := models.NewCommandValue("test-resource", v2.ValueTypeFloat64, 1.234)
+	require.NoError(t, err)
+	float32NaN, err := models.NewCommandValue("test-resource", v2.ValueTypeFloat32, float32(math.NaN()))
+	require.NoError(t, err)
+	float64NaN, err := models.NewCommandValue("test-resource", v2.ValueTypeFloat64, math.NaN())
+	require.NoError(t, err)
 
 	tests := []struct {
-		name string
-		cv   *dsModels.CommandValue
+		name     string
+		cv       *models.CommandValue
+		expected bool
 	}{
-		{"float32 NaN error", float32Val},
-		{"float64 NaN error", float64Val},
+		{"valid float32 value", validFloat32, false},
+		{"valid float64 value", validFloat64, false},
+		{"float32 NaN error", float32NaN, true},
+		{"float64 NaN error", float64NaN, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			pv := models.PropertyValue{}
-			err := TransformReadResult(tt.cv, pv, lc)
-			assert.True(t, errors.Is(err, NaNError{}), "transform result should be NaNError")
+			isNaN, err := isNaN(tt.cv)
+			assert.Equal(t, tt.expected, isNaN)
+			assert.NoError(t, err)
 		})
 	}
 }

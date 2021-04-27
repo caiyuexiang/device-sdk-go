@@ -9,7 +9,6 @@ package service
 
 import (
 	"context"
-	"fmt"
 	"regexp"
 	"sync"
 
@@ -17,11 +16,11 @@ import (
 	"github.com/edgexfoundry/go-mod-core-contracts/v2/clients/logger"
 	"github.com/edgexfoundry/go-mod-core-contracts/v2/v2/dtos"
 	"github.com/edgexfoundry/go-mod-core-contracts/v2/v2/dtos/requests"
-	contract "github.com/edgexfoundry/go-mod-core-contracts/v2/v2/models"
+	"github.com/edgexfoundry/go-mod-core-contracts/v2/v2/models"
 
+	"github.com/edgexfoundry/device-sdk-go/v2/internal/cache"
 	"github.com/edgexfoundry/device-sdk-go/v2/internal/common"
 	"github.com/edgexfoundry/device-sdk-go/v2/internal/transformer"
-	"github.com/edgexfoundry/device-sdk-go/v2/internal/v2/cache"
 	dsModels "github.com/edgexfoundry/device-sdk-go/v2/pkg/models"
 )
 
@@ -58,13 +57,26 @@ func (s *DeviceService) sendAsyncValues(acv *dsModels.AsyncValues, working chan 
 		<-working
 	}()
 
-	event, err := transformer.CommandValuesToEventDTO(acv.CommandValues, acv.DeviceName, dic)
+	if len(acv.CommandValues) == 0 {
+		s.LoggingClient.Error("Skip sending AsyncValues because the CommandValues is empty.")
+		return
+	}
+	if len(acv.CommandValues) > 1 && acv.SourceName == "" {
+		s.LoggingClient.Error("Skip sending AsyncValues because the SourceName is empty.")
+		return
+	}
+	// We can use the first reading's DeviceResourceName as the SourceName
+	// when the CommandValues contains only one reading and the AsyncValues's SourceName is empty.
+	if len(acv.CommandValues) == 1 && acv.SourceName == "" {
+		acv.SourceName = acv.CommandValues[0].DeviceResourceName
+	}
+	event, err := transformer.CommandValuesToEventDTO(acv.CommandValues, acv.DeviceName, acv.SourceName, dic)
 	if err != nil {
 		s.LoggingClient.Errorf("failed to transform CommandValues to Event: %v", err)
 		return
 	}
 
-	common.SendEvent(event, "", s.LoggingClient, s.edgexClients.EventClient)
+	common.SendEvent(event, "", dic)
 }
 
 // processAsyncFilterAndAdd filter and add devices discovered by
@@ -83,23 +95,23 @@ func (s *DeviceService) processAsyncFilterAndAdd(ctx context.Context, wg *sync.W
 			pws := cache.ProvisionWatchers().All()
 			for _, d := range devices {
 				for _, pw := range pws {
-					if whitelistPass(d, pw, s.LoggingClient) && blacklistPass(d, pw, s.LoggingClient) {
+					if checkAllowList(d, pw, s.LoggingClient) && checkBlockList(d, pw, s.LoggingClient) {
 						if _, ok := cache.Devices().ForName(d.Name); ok {
 							s.LoggingClient.Debugf("Candidate discovered device %s already existed", d.Name)
 							break
 						}
 
-						s.LoggingClient.Infof("Adding discovered device %s to Edgex", d.Name)
-						device := contract.Device{
+						s.LoggingClient.Infof("Adding discovered device %s to Metadata", d.Name)
+						device := models.Device{
 							Name:           d.Name,
 							Description:    d.Description,
 							ProfileName:    pw.ProfileName,
 							Protocols:      d.Protocols,
 							Labels:         d.Labels,
-							ServiceName:    pw.ProfileName,
+							ServiceName:    pw.ServiceName,
 							AdminState:     pw.AdminState,
-							OperatingState: contract.Up,
-							AutoEvents:     nil,
+							OperatingState: models.Up,
+							AutoEvents:     pw.AutoEvents,
 						}
 
 						req := requests.NewAddDeviceRequest(dtos.FromDeviceModelToDTO(device))
@@ -117,7 +129,7 @@ func (s *DeviceService) processAsyncFilterAndAdd(ctx context.Context, wg *sync.W
 	}
 }
 
-func whitelistPass(d dsModels.DiscoveredDevice, pw contract.ProvisionWatcher, lc logger.LoggingClient) bool {
+func checkAllowList(d dsModels.DiscoveredDevice, pw models.ProvisionWatcher, lc logger.LoggingClient) bool {
 	// ignore the device protocol properties name
 	for _, protocol := range d.Protocols {
 		matchedCount := 0
@@ -125,7 +137,7 @@ func whitelistPass(d dsModels.DiscoveredDevice, pw contract.ProvisionWatcher, lc
 			if value, ok := protocol[name]; ok {
 				matched, err := regexp.MatchString(regex, value)
 				if !matched || err != nil {
-					lc.Debug(fmt.Sprintf("Device %s's %s value %s did not match PW identifier: %s", d.Name, name, value, regex))
+					lc.Debugf("Device %s's %s value %s did not match PW identifier: %s", d.Name, name, value, regex)
 					break
 				}
 				matchedCount += 1
@@ -139,7 +151,7 @@ func whitelistPass(d dsModels.DiscoveredDevice, pw contract.ProvisionWatcher, lc
 	return false
 }
 
-func blacklistPass(d dsModels.DiscoveredDevice, pw contract.ProvisionWatcher, lc logger.LoggingClient) bool {
+func checkBlockList(d dsModels.DiscoveredDevice, pw models.ProvisionWatcher, lc logger.LoggingClient) bool {
 	// a candidate should match none of the blocking identifiers
 	for name, blacklist := range pw.BlockingIdentifiers {
 		// ignore the device protocol properties name
@@ -147,7 +159,7 @@ func blacklistPass(d dsModels.DiscoveredDevice, pw contract.ProvisionWatcher, lc
 			if value, ok := protocol[name]; ok {
 				for _, v := range blacklist {
 					if value == v {
-						lc.Debug(fmt.Sprintf("Discovered Device %s's %s should not be %s", d.Name, name, value))
+						lc.Debugf("Discovered Device %s's %s should not be %s", d.Name, name, value)
 						return false
 					}
 				}

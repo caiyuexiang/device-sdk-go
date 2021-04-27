@@ -15,8 +15,8 @@ import (
 	"github.com/edgexfoundry/go-mod-bootstrap/v2/di"
 	"github.com/edgexfoundry/go-mod-core-contracts/v2/v2/models"
 
+	"github.com/edgexfoundry/device-sdk-go/v2/internal/cache"
 	"github.com/edgexfoundry/device-sdk-go/v2/internal/container"
-	"github.com/edgexfoundry/device-sdk-go/v2/internal/v2/cache"
 )
 
 type manager struct {
@@ -63,18 +63,6 @@ func (m *manager) StartAutoEvents() {
 	}
 }
 
-func (m *manager) StopAutoEvents() {
-	m.mutex.Lock()
-	defer m.mutex.Unlock()
-
-	for deviceName, executors := range m.executorMap {
-		for _, executor := range executors {
-			executor.Stop()
-		}
-		delete(m.executorMap, deviceName)
-	}
-}
-
 func (m *manager) triggerExecutors(deviceName string, autoEvents []models.AutoEvent, dic *di.Container) []*Executor {
 	var executors []*Executor
 	lc := bootstrapContainer.LoggingClientFrom(dic.Get)
@@ -82,7 +70,7 @@ func (m *manager) triggerExecutors(deviceName string, autoEvents []models.AutoEv
 	for _, autoEvent := range autoEvents {
 		executor, err := NewExecutor(deviceName, autoEvent)
 		if err != nil {
-			lc.Errorf("failed to create executor of AutoEvent %s for Device %s: %v", autoEvent.Resource, deviceName, err)
+			lc.Errorf("failed to create executor of AutoEvent %s for Device %s: %v", autoEvent.SourceName, deviceName, err)
 			// skip this AutoEvent if it causes error during creation
 			continue
 		}

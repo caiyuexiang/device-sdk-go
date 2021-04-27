@@ -17,13 +17,13 @@ import (
 	"github.com/edgexfoundry/go-mod-core-contracts/v2/v2/models"
 	"github.com/google/uuid"
 
+	"github.com/edgexfoundry/device-sdk-go/v2/internal/cache"
 	"github.com/edgexfoundry/device-sdk-go/v2/internal/common"
-	"github.com/edgexfoundry/device-sdk-go/v2/internal/v2/cache"
 )
 
 // AddDeviceProfile adds a new DeviceProfile to the Device Service and Core Metadata
 // Returns new DeviceProfile id or non-nil error.
-func (s *DeviceService) AddDeviceProfile(profile models.DeviceProfile) (string, errors.EdgeX) {
+func (s *DeviceService) AddDeviceProfile(profile models.DeviceProfile) (string, error) {
 	if p, ok := cache.Profiles().ForName(profile.Name); ok {
 		return p.Id, errors.NewCommonEdgeX(errors.KindDuplicateName, fmt.Sprintf("name conflicted, Profile %s exists", profile.Name), nil)
 	}
@@ -50,9 +50,20 @@ func (s *DeviceService) DeviceProfiles() []models.DeviceProfile {
 	return cache.Profiles().All()
 }
 
+// GetProfileByName returns the Profile by its name if it exists in the cache, or returns an error.
+func (s *DeviceService) GetProfileByName(name string) (models.DeviceProfile, error) {
+	profile, ok := cache.Profiles().ForName(name)
+	if !ok {
+		msg := fmt.Sprintf("failed to find Profile %s in cache", name)
+		s.LoggingClient.Error(msg)
+		return models.DeviceProfile{}, errors.NewCommonEdgeX(errors.KindEntityDoesNotExist, msg, nil)
+	}
+	return profile, nil
+}
+
 // RemoveDeviceProfileByName removes the specified DeviceProfile by name from the cache and ensures that the
 // instance in Core Metadata is also removed.
-func (s *DeviceService) RemoveDeviceProfileByName(name string) errors.EdgeX {
+func (s *DeviceService) RemoveDeviceProfileByName(name string) error {
 	profile, ok := cache.Profiles().ForName(name)
 	if !ok {
 		msg := fmt.Sprintf("failed to find Profile %s in cache", name)
@@ -74,7 +85,7 @@ func (s *DeviceService) RemoveDeviceProfileByName(name string) errors.EdgeX {
 
 // UpdateDeviceProfile updates the DeviceProfile in the cache and ensures that the
 // copy in Core Metadata is also updated.
-func (s *DeviceService) UpdateDeviceProfile(profile models.DeviceProfile) errors.EdgeX {
+func (s *DeviceService) UpdateDeviceProfile(profile models.DeviceProfile) error {
 	_, ok := cache.Profiles().ForName(profile.Name)
 	if !ok {
 		msg := fmt.Sprintf("failed to find Profile %s in cache", profile.Name)
@@ -94,21 +105,20 @@ func (s *DeviceService) UpdateDeviceProfile(profile models.DeviceProfile) errors
 	return err
 }
 
-// ResourceOperation retrieves the first matched ResourceOperation instance from cache according to
-// the Device name, Device Resource name, and the method (get or set).
-func (s *DeviceService) ResourceOperation(deviceName string, deviceResource string, method string) (models.ResourceOperation, bool) {
+// DeviceCommand retrieves the specific DeviceCommand instance from cache according to
+// the Device name and Command name
+func (s *DeviceService) DeviceCommand(deviceName string, commandName string) (models.DeviceCommand, bool) {
 	device, ok := cache.Devices().ForName(deviceName)
 	if !ok {
 		s.LoggingClient.Errorf("failed to find device %s in cache", deviceName)
-		return models.ResourceOperation{}, false
+		return models.DeviceCommand{}, false
 	}
 
-	ro, err := cache.Profiles().ResourceOperation(device.ProfileName, deviceResource, method)
-	if err != nil {
-		s.LoggingClient.Error(err.Error())
-		return ro, false
+	dc, ok := cache.Profiles().DeviceCommand(device.ProfileName, commandName)
+	if !ok {
+		return dc, false
 	}
-	return ro, true
+	return dc, true
 }
 
 // DeviceResource retrieves the specific DeviceResource instance from cache according to

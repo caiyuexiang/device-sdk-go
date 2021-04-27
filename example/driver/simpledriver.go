@@ -17,22 +17,27 @@ import (
 	"image/jpeg"
 	"image/png"
 	"os"
+	"reflect"
 	"time"
 
 	"github.com/edgexfoundry/go-mod-core-contracts/v2/clients/logger"
+	"github.com/edgexfoundry/go-mod-core-contracts/v2/v2"
 	contract "github.com/edgexfoundry/go-mod-core-contracts/v2/v2/models"
 
+	"github.com/edgexfoundry/device-sdk-go/v2/example/config"
 	dsModels "github.com/edgexfoundry/device-sdk-go/v2/pkg/models"
+	"github.com/edgexfoundry/device-sdk-go/v2/pkg/service"
 )
 
 type SimpleDriver struct {
-	lc           logger.LoggingClient
-	asyncCh      chan<- *dsModels.AsyncValues
-	deviceCh     chan<- []dsModels.DiscoveredDevice
-	switchButton bool
-	xRotation    int32
-	yRotation    int32
-	zRotation    int32
+	lc            logger.LoggingClient
+	asyncCh       chan<- *dsModels.AsyncValues
+	deviceCh      chan<- []dsModels.DiscoveredDevice
+	switchButton  bool
+	xRotation     int32
+	yRotation     int32
+	zRotation     int32
+	serviceConfig *config.ServiceConfig
 }
 
 func getImageBytes(imgFile string, buf *bytes.Buffer) error {
@@ -73,7 +78,56 @@ func (s *SimpleDriver) Initialize(lc logger.LoggingClient, asyncCh chan<- *dsMod
 	s.lc = lc
 	s.asyncCh = asyncCh
 	s.deviceCh = deviceCh
+	s.serviceConfig = &config.ServiceConfig{}
+
+	ds := service.RunningService()
+
+	if err := ds.LoadCustomConfig(s.serviceConfig, "SimpleCustom"); err != nil {
+		return fmt.Errorf("unable to load 'SimpleCustom' custom configuration: %s", err.Error())
+	}
+
+	lc.Infof("Custom config is: %v", s.serviceConfig.SimpleCustom)
+
+	if err := s.serviceConfig.SimpleCustom.Validate(); err != nil {
+		return fmt.Errorf("'SimpleCustom' custom configuration validation failed: %s", err.Error())
+	}
+
+	if err := ds.ListenForCustomConfigChanges(
+		&s.serviceConfig.SimpleCustom.Writable,
+		"SimpleCustom/Writable", s.ProcessCustomConfigChanges); err != nil {
+		return fmt.Errorf("unable to listen for changes for 'SimpleCustom.Writable' custom configuration: %s", err.Error())
+	}
+
 	return nil
+}
+
+// ProcessCustomConfigChanges ...
+func (s *SimpleDriver) ProcessCustomConfigChanges(rawWritableConfig interface{}) {
+	updated, ok := rawWritableConfig.(*config.SimpleWritable)
+	if !ok {
+		s.lc.Error("unable to process custom config updates: Can not cast raw config to type 'SimpleWritable'")
+		return
+	}
+
+	s.lc.Info("Received configuration updates for 'SimpleCustom.Writable' section")
+
+	previous := s.serviceConfig.SimpleCustom.Writable
+	s.serviceConfig.SimpleCustom.Writable = *updated
+
+	if reflect.DeepEqual(previous, *updated) {
+		s.lc.Info("No changes detected")
+		return
+	}
+
+	// Now check to determine what changed.
+	// In this example we only have the one writable setting,
+	// so the check is not really need but left here as an example.
+	// Since this setting is pulled from configuration each time it is need, no extra processing is required.
+	// This may not be true for all settings, such as external host connection info, which
+	// may require re-establishing the connection to the external host for example.
+	if previous.DiscoverSleepDurationSecs != updated.DiscoverSleepDurationSecs {
+		s.lc.Infof("DiscoverSleepDurationSecs changed to: %d", updated.DiscoverSleepDurationSecs)
+	}
 }
 
 // HandleReadCommands triggers a protocol Read operation for the specified device.
@@ -82,45 +136,43 @@ func (s *SimpleDriver) HandleReadCommands(deviceName string, protocols map[strin
 
 	if len(reqs) == 1 {
 		res = make([]*dsModels.CommandValue, 1)
-		now := time.Now().UnixNano()
 		if reqs[0].DeviceResourceName == "SwitchButton" {
-			cv, _ := dsModels.NewBoolValue(reqs[0].DeviceResourceName, now, s.switchButton)
+			cv, _ := dsModels.NewCommandValue(reqs[0].DeviceResourceName, v2.ValueTypeBool, s.switchButton)
 			res[0] = cv
 		} else if reqs[0].DeviceResourceName == "Xrotation" {
-			cv, _ := dsModels.NewInt32Value(reqs[0].DeviceResourceName, now, s.xRotation)
+			cv, _ := dsModels.NewCommandValue(reqs[0].DeviceResourceName, v2.ValueTypeInt32, s.xRotation)
 			res[0] = cv
 		} else if reqs[0].DeviceResourceName == "Yrotation" {
-			cv, _ := dsModels.NewInt32Value(reqs[0].DeviceResourceName, now, s.yRotation)
+			cv, _ := dsModels.NewCommandValue(reqs[0].DeviceResourceName, v2.ValueTypeInt32, s.yRotation)
 			res[0] = cv
 		} else if reqs[0].DeviceResourceName == "Zrotation" {
-			cv, _ := dsModels.NewInt32Value(reqs[0].DeviceResourceName, now, s.zRotation)
+			cv, _ := dsModels.NewCommandValue(reqs[0].DeviceResourceName, v2.ValueTypeInt32, s.zRotation)
 			res[0] = cv
 		} else if reqs[0].DeviceResourceName == "Image" {
 			// Show a binary/image representation of the switch's on/off value
 			buf := new(bytes.Buffer)
 			if s.switchButton == true {
-				err = getImageBytes("./res/on.png", buf)
+				err = getImageBytes(s.serviceConfig.SimpleCustom.OnImageLocation, buf)
 			} else {
-				err = getImageBytes("./res/off.jpg", buf)
+				err = getImageBytes(s.serviceConfig.SimpleCustom.OffImageLocation, buf)
 			}
-			cvb, _ := dsModels.NewBinaryValue(reqs[0].DeviceResourceName, now, buf.Bytes())
+			cvb, _ := dsModels.NewCommandValue(reqs[0].DeviceResourceName, v2.ValueTypeBinary, buf.Bytes())
 			res[0] = cvb
 		} else if reqs[0].DeviceResourceName == "Uint8Array" {
-			cv, _ := dsModels.NewUint8ArrayValue(reqs[0].DeviceResourceName, now, []uint8{0, 1, 2})
+			cv, _ := dsModels.NewCommandValue(reqs[0].DeviceResourceName, v2.ValueTypeUint8Array, []uint8{0, 1, 2})
 			res[0] = cv
 		}
 	} else if len(reqs) == 3 {
 		res = make([]*dsModels.CommandValue, 3)
 		for i, r := range reqs {
 			var cv *dsModels.CommandValue
-			now := time.Now().UnixNano()
 			switch r.DeviceResourceName {
 			case "Xrotation":
-				cv, _ = dsModels.NewInt32Value(r.DeviceResourceName, now, s.xRotation)
+				cv, _ = dsModels.NewCommandValue(r.DeviceResourceName, v2.ValueTypeInt32, s.xRotation)
 			case "Yrotation":
-				cv, _ = dsModels.NewInt32Value(r.DeviceResourceName, now, s.yRotation)
+				cv, _ = dsModels.NewCommandValue(r.DeviceResourceName, v2.ValueTypeInt32, s.yRotation)
 			case "Zrotation":
-				cv, _ = dsModels.NewInt32Value(r.DeviceResourceName, now, s.zRotation)
+				cv, _ = dsModels.NewCommandValue(r.DeviceResourceName, v2.ValueTypeInt32, s.zRotation)
 			}
 			res[i] = cv
 		}
@@ -231,6 +283,6 @@ func (s *SimpleDriver) Discover() {
 
 	res := []dsModels.DiscoveredDevice{device2, device3}
 
-	time.Sleep(10 * time.Second)
+	time.Sleep(time.Duration(s.serviceConfig.SimpleCustom.Writable.DiscoverSleepDurationSecs) * time.Second)
 	s.deviceCh <- res
 }
